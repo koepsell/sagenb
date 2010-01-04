@@ -1306,7 +1306,7 @@ function set_worksheet_list_checks() {
     var C, i, id, X;
     C = get_element("controlbox");
     for(i=0; i<worksheet_filenames.length; i++) {
-        id = worksheet_filenames[i].replace('/', '-');
+        id = worksheet_filenames[i].replace(/[^-A-Za-z_0-9]/g, '-');
         X  = get_element(id);
         X.checked = C.checked;
     }
@@ -1331,7 +1331,7 @@ function checked_worksheet_filenames() {
     // Concatenate the list of all worksheet filenames that are checked
     // together separated by the separator string.
     for(i=0; i<worksheet_filenames.length; i++) {
-        id = worksheet_filenames[i].replace('/', '-');
+        id = worksheet_filenames[i].replace(/[^-A-Za-z_0-9]/g, '-');
         X  = get_element(id);
         if (X.checked) {
             filenames = filenames + worksheet_filenames[i] + SEP;
@@ -2177,6 +2177,50 @@ function cell_delete_callback(status, response_text) {
         slide_mode();
     }
 }
+
+function cell_delete_output(id) {
+    /*
+    Ask the server to delete the output of a cell.
+
+    INPUT:
+        id -- an integer
+    */
+    if (active_cell_list.indexOf(id) != -1) {
+        // Deleting a running cell causes evaluation to be interrupted.
+        // In most cases this avoids potentially tons of confusion.
+        async_request(worksheet_command('interrupt'));
+    }
+    async_request(worksheet_command('delete_cell_output'),
+		  cell_delete_output_callback, {id: id});
+}
+
+function cell_delete_output_callback(status, response_text) {
+    /*
+    Callback for after the server deletes a cell's output.  This
+    function removes the cell's output from the DOM.
+
+    INPUT:
+        status -- string ('success' or 'failure')
+        response_text -- [command]SEP[id]
+               command -- string ('delete_output')
+               id -- id of cell whose output is deleted.
+    */
+    var id;
+    if (status !== 'success') {
+	// Do not delete output, for some reason.
+        return;
+    }
+    id = response_text.split(SEP)[1];
+
+    // Delete the output.
+    get_element('cell_output_' + id).innerHTML = "";
+    get_element('cell_output_nowrap_' + id).innerHTML = "";
+    get_element('cell_output_html_' + id).innerHTML = "";
+
+    // Set the cell to not evaluated.
+    cell_set_not_evaluated(id);
+}
+
 
 function debug_input_key_event(e) {
     /*

@@ -39,7 +39,6 @@ from sagenb.interfaces import (WorksheetProcess_ExpectImplementation,
                                WorksheetProcess_RemoteExpectImplementation)
 
                          
-from sagenb.misc.support import preparse_file
 import sagenb.misc.support  as support
 
 # Imports specifically relevant to the sage notebook
@@ -49,6 +48,9 @@ from template import template
 # Set some constants that will be used for regular expressions below.
 whitespace = re.compile('\s')  # Match any whitespace character
 non_whitespace = re.compile('\S')
+
+# The file to which the Sage code that will be evaluated is written.
+CODE_PY = "___code___.py"
 
 # Constants that control the behavior of the worksheet.
 INTERRUPT_TRIES = 3    # number of times to send control-c to subprocess before giving up
@@ -3085,7 +3087,6 @@ from sagenb.notebook.all import *
         if C.time() and not C.introspect():
             input += 'print "CPU time: %.2f s,  Wall time: %.2f s"%(cputime(__SAGE_t__), walltime(__SAGE_w__))\n'
         self.__comp_is_running = True
-        'exec _support_.preparse(base64.b64decode("%s"))'%base64.b64encode(input)
         self.sage().execute(input, os.path.abspath(self.data_directory()))
                 
     def check_comp(self, wait=0.2):
@@ -3181,7 +3182,15 @@ from sagenb.notebook.all import *
         if C.is_no_output():
             # Clean up the temp directories associated to C, and do not set any output
             # text that C might have got.
-            shutil.rmtree(self.cell_directory(C), ignore_errors=True)
+            d = self.cell_directory(C)
+            for X in os.path.listdir(d):
+                if os.path.split(X)[-1] != CODE_PY:
+                    Y = os.path.join(d, X)
+                    if os.path.isfile(Y):
+                        try: os.unlink(Y)
+                        except: pass
+                    else:
+                        shutil.rmtree(Y, ignore_errors=True)
             return 'd', C
         
         if not C.introspect():
@@ -3192,6 +3201,7 @@ from sagenb.notebook.all import *
                 if not os.path.exists(cell_dir):
                     os.makedirs(cell_dir)
                 for X in filenames:
+                    if os.path.split(X)[-1] == CODE_PY: continue
                     target = os.path.join(cell_dir, os.path.split(X)[1])
                     try:
                         if os.path.exists(target):
@@ -3204,6 +3214,11 @@ from sagenb.notebook.all import *
                         else:
                             shutil.copy(X, target)
                         set_restrictive_permissions(target)
+                        if os.path.isfile(X):
+                            try: os.unlink(X)
+                            except: pass
+                        else:
+                            shutil.rmtree(X, ignore_errors=True)
                     except Exception, msg:
                         print "Error copying file from worksheet process:", msg
             # Generate html, etc.
@@ -3576,8 +3591,6 @@ from sagenb.notebook.all import *
         """
         input = ignore_prompts_and_output(input).rstrip()
         input = self.preparse(input)
-        input = self.load_any_changed_attached_files(input)
-        input = self.do_sage_extensions_preparsing(input)
         return input
         
     def _strip_synchro_from_start_of_output(self, s):
@@ -3626,8 +3639,22 @@ from sagenb.notebook.all import *
         return support.get_rightmost_identifier(s)
 
     def preparse(self, s):
-        return preparse_file(s, magic=False, do_time=True,
-                          ignore_prompts=False)
+        """
+        Return preparsed version of input code ``s``, ready to be sent
+        to the Sage process for evaluation.  The output is a "safe
+        string" (no funny characters).
+
+        INPUT:
+
+            - ``s`` -- a string
+
+        OUTPUT:
+
+            - a string
+        """
+        # The extra newline below is necessary, since otherwise source
+        # code introspection doesn't include the last line.
+        return 'open("%s","w").write(_support_.preparse_worksheet_cell(base64.b64decode("%s"),globals())+"\\n"); execfile(os.path.abspath("%s"))'%(CODE_PY, base64.b64encode(s), CODE_PY)
 
     ##########################################################
     # Loading and attaching files
@@ -3759,39 +3786,6 @@ from sagenb.notebook.all import *
         return ';'.join(['save(%s,"%s")'%(x,x) for x in v])
         
 
-    def do_sage_extensions_preparsing(self, s, files_seen_so_far=[], this_file=''):
-        u = []
-        for t in s.split('\n'):
-            if t.startswith('load '):
-                z = ''
-                for filename in self._normalized_filenames(after_first_word(t)):
-                    filename = self.hunt_file(filename)
-                    z += self._load_file(filename, files_seen_so_far, this_file) + '\n'
-                t = z
-                
-            elif t.startswith('attach '):
-                z = ''
-                for filename in self._normalized_filenames(after_first_word(t)):
-                    filename = self.hunt_file(filename)                    
-                    if not os.path.exists(filename):
-                        z += "print 'Error attaching %s -- file not found'\n"%filename
-                    else:
-                        self.attach(filename)
-                        z += self._load_file(filename, files_seen_so_far, this_file) + '\n'
-                t = z
-                    
-            elif t.startswith('detach '):
-                filename = self.hunt_file(filename)                                    
-                for filename in self._normalized_filenames(after_first_word(t)):
-                    self.detach(filename)
-                t = ''
-
-            elif t.startswith('save '):
-                t = self._save_objects(after_first_word(t))
-                
-            u.append(t)
-            
-        return '\n'.join(u)
 
     def _eval_cmd(self, system, cmd, dir):
         cmd = cmd.replace("'", "\\u0027")

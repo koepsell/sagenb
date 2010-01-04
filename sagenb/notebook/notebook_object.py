@@ -31,8 +31,10 @@ chapter, and at http://wiki.sagemath.org/StartingTheNotebook.
         - ``directory``     -- directory that contains the Sage notebook files;
           the default is .sage/sage_notebook, in your home directory.
         - ``port``          -- (default: 8000), port to serve the notebook on.
-        - ``address``       -- (default: 'localhost'), address of network
+        - ``interface``     -- (default: 'localhost'), address of network
           interface to listen on; give '' to listen on all interfaces.
+          You may use ``address`` here for backwards compatibility, but this
+          is deprecated and will be removed in the future.
         - ``port_tries``    -- (default: 0), number of additional ports to try if
           the first one doesn't work (*not* implemented).
         - ``secure``        -- (default: False) if True use https so all
@@ -71,8 +73,17 @@ chapter, and at http://wiki.sagemath.org/StartingTheNotebook.
           this will free the memory used by idle sessions.
         - ``server_pool``   -- (default: None) list; this option specifies that
           worksheet processes run as a separate user (chosen
-          from the list in the server_pool -- see below). 
-                      
+          from the list in the server_pool -- see below).
+        - ``subnets`` -- (default: None) a list of strings that define subnets;
+          if given, requests to the notebook server from ip addresses
+          that are not in any of the listed subnets are ignored.  See
+          http://en.wikipedia.org/wiki/Subnetwork for more about subnets.
+          An example input is ``subnets=['192.168.1.0/24', '216.34.0.0/16']``,
+          which accepts any address of the form ``192.168.1.*`` or of the
+          form ``216.34.*.*``.  For serious use, you may want to instead
+          use your operating system's firewall, which is probably more
+          robust and reduces the load on the server.  Note that '127.0.0.1'
+          is always allowed no matter what.
 
     NOTE: If you have problems with the server certificate hostname not
     matching, do \code{notebook.setup()}.

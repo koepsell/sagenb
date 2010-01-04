@@ -51,7 +51,8 @@ def notebook_setup(self=None):
 def notebook_twisted(self,
              directory   = None,
              port        = 8000,
-             address     = 'localhost',
+             interface   = 'localhost',        
+             address     = None,
              port_tries  = 50,
              secure      = False,
              reset       = False,
@@ -68,7 +69,17 @@ def notebook_twisted(self,
              sagetex_path = "",
              start_path = "",
              fork = False,
-             quiet = False):
+             quiet = False,
+
+             subnets = None):
+
+    # For backwards compatible, we still allow the address to be set
+    # instead of the interface argument
+    if address is not None:
+        from warnings import warn
+        message = "Use 'interface' instead of 'address' when calling notebook(...)."
+        warn(message, DeprecationWarning, stacklevel=3)
+        interface = address
              
     if directory is None:
         directory = '%s/sage_notebook'%DOT_SAGENB
@@ -83,7 +94,7 @@ def notebook_twisted(self,
 
     port = int(port)
 
-    if not secure and address != 'localhost':
+    if not secure and interface != 'localhost':
         print '*'*70
         print "WARNING: Running the notebook insecurely not on localhost is dangerous"
         print "because its possible for people to sniff passwords and gain access to"
@@ -136,7 +147,7 @@ def notebook_twisted(self,
     nb.save()
     del nb
 
-    def run(port):
+    def run(port, subnets):
         ## Create the config file
         if secure:
             if not os.path.exists(private_pem) or not os.path.exists(public_pem):
@@ -145,23 +156,46 @@ def notebook_twisted(self,
                 notebook_setup()
             if not os.path.exists(private_pem) or not os.path.exists(public_pem):
                 print "Failed to setup notebook.  Please try notebook.setup() again manually."
-            strport = '%s:%s:interface=%s:privateKey=%s:certKey=%s'%(protocol, port, address, private_pem, public_pem)
+            strport = '%s:%s:interface=%s:privateKey=%s:certKey=%s'%(protocol, port, interface, private_pem, public_pem)
         else:
-            strport = 'tcp:%s:interface=%s'%(port, address)
+            strport = 'tcp:%s:interface=%s'%(port, interface)
 
-        notebook_opts = '"%s",address="%s",port=%s,secure=%s' % (os.path.abspath(directory),
-                address, port, secure)
+        notebook_opts = '"%s",interface="%s",port=%s,secure=%s' % (os.path.abspath(directory),
+                interface, port, secure)
 
         if open_viewer:
             if require_login:
                 start_path = "'/?startup_token=%s' % startup_token"
             else:
                 start_path = "'/'"
-            open_page = "from sagenb.misc.misc import open_page; open_page('%s', %s, %s, %s)"%(address, port, secure, start_path)
+            open_page = "from sagenb.misc.misc import open_page; open_page('%s', %s, %s, %s)"%(interface, port, secure, start_path)
         else:
             open_page = ''
         
         config = open(conf, 'w')
+
+        if subnets is None:
+            factory = "factory = channel.HTTPFactory(site)"
+        else:
+            if not isinstance(subnets, (list, tuple)):
+                subnets = [subnets]
+            factory = """
+# See http://stackoverflow.com/questions/1273297/python-twisted-restricting-access-by-ip-address
+from sagenb.misc.ipaddr import IPNetwork
+subnets = eval(r"%s")
+if not any(s.startswith('127') for s in subnets):
+    subnets.insert(0, '127.0.0.0/8')
+subnets = [IPNetwork(x) for x in subnets]
+class RestrictedIPFactory(channel.HTTPFactory):
+    def buildProtocol(self, addr):
+        a = str(addr.host)
+        for X in subnets:
+            if a in X:
+                return channel.HTTPFactory.buildProtocol(self, addr)
+        print 'Ignoring all requests from IP address '+str(addr.host)
+        
+factory = RestrictedIPFactory(site)
+"""%tuple([subnets])
 
         config.write("""
 ####################################################################        
@@ -185,6 +219,8 @@ import sagenb.notebook.worksheet as worksheet
 import signal, sys, random
 def save_notebook():
     from twisted.internet.error import ReactorNotRunning
+    print "Quitting all running worksheets..."
+    twist.notebook.quit()
     print "Saving notebook..."
     twist.notebook.save()
     try:
@@ -228,8 +264,7 @@ p.registerChecker(checkers.AllowAnonymousAccess())
 rsrc = guard.MySessionWrapper(p)
 log.DefaultCommonAccessLoggingObserver().start()
 site = server.Site(rsrc)
-factory = channel.HTTPFactory(site)
-
+%s
 from twisted.web2 import channel
 from twisted.application import service, strports
 application = service.Application("SAGE Notebook")
@@ -240,14 +275,15 @@ s.setServiceParent(application)
 reactor.addSystemEventTrigger('before', 'shutdown', save_notebook)
 
 """%(notebook_opts, sagetex_path, not require_login,
-     os.path.abspath(directory), strport, open_page))
+     os.path.abspath(directory), factory,
+     strport, open_page))
 
 
         config.close()                     
 
         ## Start up twisted
         if not quiet:
-            print_open_msg('localhost' if not address else address, port, secure=secure)
+            print_open_msg('localhost' if not interface else interface, port, secure=secure)
         if secure and not quiet:
             print "There is an admin account.  If you do not remember the password,"
             print "quit the notebook and type notebook(reset=True)."
@@ -262,19 +298,17 @@ reactor.addSystemEventTrigger('before', 'shutdown', save_notebook)
         return True
         # end of inner function run
                      
-    if address != 'localhost' and not secure:
+    if interface != 'localhost' and not secure:
             print "*"*70
-            print "WARNING: Insecure notebook server listening on external address."
+            print "WARNING: Insecure notebook server listening on external interface."
             print "Unless you are running this via ssh port forwarding, you are"
             print "**crazy**!  You should run the notebook with the option secure=True."
             print "*"*70
 
     port = find_next_available_port(port, port_tries)
-    #if open_viewer:
-    #    open_page(address, port, secure, pause=PAUSE)
     if open_viewer:
         "Open viewer automatically isn't fully implemented.  You have to manually open your web browser to the above URL."
-    return run(port)
+    return run(port, subnets)
 
 
 
